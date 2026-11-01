@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2025</RevitInstallDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Xceed.Wpf.AvalonDock"><HintPath>$(RevitInstallDir)\Xceed.Wpf.AvalonDock.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="RevitAPI"><HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="RevitAPIUI"><HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UIFramework"><HintPath>$(RevitInstallDir)\UIFramework.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

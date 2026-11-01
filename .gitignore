@@ -1,0 +1,41 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build folders
+bin/
+obj/
+Debug/
+Release/
+x64/
+x86/
+
+# NuGet
+packages/
+*.nupkg
+
+# VS Code
+.vscode/
+
+# ReSharper
+_ReSharper*/
+*.DotSettings.user
+
+# Test results
+TestResults/
+*.trx
+
+# Temporary files
+*.tmp
+*.log
+*.cache
+
+# Revit add-in build/package output
+dist/
+
+# OS files
+Thumbs.db
+.DS_Store

@@ -1,0 +1,119 @@
+<UserControl x:Class="MEP_Review_Tab_View_Ver1.ViewSearchPane"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Background="#F5F5F5" Foreground="#222222" FontFamily="Segoe UI"
+      MinWidth="240" AllowDrop="True" PreviewDragOver="PaneDragOver" PreviewDrop="PaneDrop" DragLeave="PaneDragLeave">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="Surface" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="Stroke" Color="#B8B8B8"/>
+        <SolidColorBrush x:Key="Accent" Color="#0078D4"/>
+        <SolidColorBrush x:Key="Selected" Color="#DCEAF7"/>
+        <SolidColorBrush x:Key="Ink" Color="#222222"/>
+        <Style x:Key="FlatButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+                <Border x:Name="Face" CornerRadius="4" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Face" Property="Background" Value="{StaticResource Selected}"/></Trigger>
+                    <Trigger Property="IsPressed" Value="True"><Setter TargetName="Face" Property="Background" Value="#C7E0F4"/></Trigger>
+                    <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Face" Property="BorderBrush" Value="{StaticResource Accent}"/><Setter TargetName="Face" Property="BorderThickness" Value="1"/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Padding" Value="8,6"/><Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem">
+                <Border x:Name="Row" Background="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="3">
+                    <ContentPresenter/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Row" Property="Background" Value="{StaticResource Selected}"/></Trigger>
+                    <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="#E5E5E5"/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+    </UserControl.Resources>
+    <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <StackPanel x:Name="WindowButtons" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="5,4" Visibility="Collapsed">
+        <Button Content="&#x2212;" Width="30" Height="26" Padding="0" Style="{StaticResource FlatButton}" Click="MinimizeWindowClick" ToolTip="Thu nhỏ cửa sổ view" AutomationProperties.Name="Minimize floating view"/>
+        <Button x:Name="MaximizeWindowButton" Content="&#x25A1;" Width="30" Height="26" Padding="0" Style="{StaticResource FlatButton}" Click="MaximizeWindowClick" ToolTip="Phóng to / Khôi phục cửa sổ view" AutomationProperties.Name="Maximize or restore floating view"/>
+        <Button Content="&#x00D7;" Width="30" Height="26" Padding="0" Style="{StaticResource FlatButton}" Click="CloseViewClick" ToolTip="Đóng view trong cửa sổ này" IsEnabled="{Binding IsEnabled, ElementName=CloseViewButton}" AutomationProperties.Name="Close floating view"/>
+    </StackPanel>
+    <Grid x:Name="ControlsAnchor" Margin="5,4" VerticalAlignment="Top" HorizontalAlignment="Left" Width="360">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="32"/><RowDefinition Height="6"/><RowDefinition Height="30"/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <ItemsControl x:Name="ProjectTabs" Grid.Row="0" Margin="0,0,0,6">
+            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate><DataTemplate>
+                <Border CornerRadius="5" BorderThickness="1" Margin="0,0,5,2">
+                    <Border.Style><Style TargetType="Border">
+                        <Setter Property="Background" Value="{StaticResource Surface}"/><Setter Property="BorderBrush" Value="{StaticResource Stroke}"/>
+                        <Style.Triggers><DataTrigger Binding="{Binding Selected}" Value="True">
+                            <Setter Property="Background" Value="{StaticResource Selected}"/><Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+                        </DataTrigger></Style.Triggers>
+                    </Style></Border.Style>
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
+                        <Button Click="ProjectTabClick" Style="{StaticResource FlatButton}" ToolTip="{Binding Name}">
+                            <TextBlock Text="{Binding Name}" MaxWidth="120" TextTrimming="CharacterEllipsis"/>
+                        </Button>
+                        <Button Grid.Column="1" Content="×" Padding="2" Style="{StaticResource FlatButton}" Click="CloseProjectClick"
+                                ToolTip="Đóng project — Revit sẽ hỏi lưu thay đổi" AutomationProperties.Name="Close project"/>
+                    </Grid>
+                </Border>
+            </DataTemplate></ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <Border Grid.Row="1" CornerRadius="5" BorderBrush="{StaticResource Stroke}" BorderThickness="1" Background="{StaticResource Surface}">
+            <Grid>
+                <TextBox x:Name="SearchBox" Padding="10,4" BorderThickness="0" Background="Transparent" Foreground="{StaticResource Ink}"
+                         VerticalContentAlignment="Center" TextChanged="SearchChanged" KeyDown="SearchKeyDown" AutomationProperties.Name="Search open views"/>
+                <TextBlock Text="Search views…" Margin="11,0" VerticalAlignment="Center" Foreground="#6B6B6B" IsHitTestVisible="False">
+                    <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+                    </Style></TextBlock.Style>
+                </TextBlock>
+            </Grid>
+        </Border>
+        <Border x:Name="ViewActionRow" Grid.Row="3" CornerRadius="5" BorderBrush="{StaticResource Stroke}" BorderThickness="1" Background="{StaticResource Surface}">
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition/><ColumnDefinition Width="28"/></Grid.ColumnDefinitions>
+                <Border x:Name="DragHandle" Grid.Column="0" Background="#E5E5E5" CornerRadius="4,0,0,4" Cursor="SizeAll" IsEnabled="False"
+                        ToolTip="Kéo sang ô khác; thả ra ngoài để tách view" MouseLeftButtonDown="DragHandleDown" MouseMove="DragHandleMove" MouseLeftButtonUp="DragHandleUp"
+                        AutomationProperties.Name="Drag or detach current view">
+                    <TextBlock Text="↔" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#0078D4"/>
+                </Border>
+                <ComboBox x:Name="ViewSelector" Grid.Column="1" Foreground="{StaticResource Ink}" IsEditable="False" IsTextSearchEnabled="False" MaxDropDownHeight="320"
+                          AutomationProperties.Name="Select open view">
+                    <ComboBox.Template><ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press">
+                                <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="#FFFFFF"><TextBlock Text="⌄" Foreground="#4A4A4A" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,7,0"/></Border>
+                                </ControlTemplate></ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter Margin="8,0,24,0" VerticalAlignment="Center" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
+                            <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False" StaysOpen="False" IsOpen="{TemplateBinding IsDropDownOpen}">
+                                <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Stroke}" BorderThickness="1" CornerRadius="5"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ScrollViewer MaxHeight="320" CanContentScroll="True"><StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate></ComboBox.Template>
+                    <ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/></DataTemplate></ComboBox.ItemTemplate>
+                </ComboBox>
+                <TextBlock x:Name="EmptyLabel" Grid.Column="1" Text="Chưa có view đang mở" Margin="10,0,25,0" Foreground="#6B6B6B"
+                           VerticalAlignment="Center" IsHitTestVisible="False" TextTrimming="CharacterEllipsis"/>
+                <Button x:Name="CloseViewButton" Grid.Column="2" Content="×" FontSize="17" Padding="2" Style="{StaticResource FlatButton}" Click="CloseViewClick"
+                        IsEnabled="False" ToolTip="Đóng view trong ô này" AutomationProperties.Name="Close current view"/>
+            </Grid>
+        </Border>
+        <TextBlock x:Name="StatusLabel" Grid.Row="4" Visibility="Collapsed" TextWrapping="Wrap" Foreground="#B3261E" Margin="0,4,0,0" AutomationProperties.LiveSetting="Polite"/>
+    </Grid>
+    </Grid>
+</UserControl>
