@@ -126,6 +126,7 @@ namespace MEP_Review_Tab_View_Ver1
         }
         internal void ActivateBoth(LayoutDocument target)
         {
+            FloatingDocumentPresenter.Refresh(source.Root?.Manager);
             source.Root?.Manager?.UpdateLayout();
             var passive=!ReferenceEquals(source,other) ? Selected(other) as LayoutDocument : null;
             if(passive!=null && !ReferenceEquals(passive,target))
@@ -166,6 +167,7 @@ namespace MEP_Review_Tab_View_Ver1
                 }
                 if (sourceSelected != null) SelectAgain(source,sourceSelected);
                 if (otherSelected != null) SelectAgain(other,otherSelected);
+                FloatingDocumentPresenter.Refresh(source.Root?.Manager);
                 restored = true;
             }
         }

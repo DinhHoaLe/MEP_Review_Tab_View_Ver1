@@ -42,6 +42,12 @@ namespace MEP_Review_Tab_View_Ver1
                 ToolTip = Property(selected, "ToolTip") as string
             };
         }
+        internal static PaneViewSelection ReadFloating(Xceed.Wpf.AvalonDock.Layout.LayoutDocumentFloatingWindow model,PaneViewSelection caption)
+        {
+            // The OS frame title does not follow RootDocument replacements.
+            // Use the same document identity as the actual floating presenter.
+            return model?.RootDocument==null ? caption : ReadDocument(model.RootDocument);
+        }
 
         private static object Property(object target, string name) =>
             target?.GetType().GetProperty(name)?.GetValue(target);

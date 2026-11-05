@@ -26,6 +26,8 @@ namespace MEP_Review_Tab_View_Ver1
         {
             internal FloatingViewToolbar Toolbar;
             internal ViewSearchPane Search;
+            internal LayoutDocumentFloatingWindow Model;
+            internal PaneViewSelection Selection()=>PaneViewSelection.ReadFloating(Model,Toolbar.Selection());
         }
         private readonly List<FloatingHosted> floating=new List<FloatingHosted>();
         private string floatingSignature;
@@ -81,9 +83,15 @@ namespace MEP_Review_Tab_View_Ver1
             var matches=project?.Views.Where(view=>view.Aliases.Any(alias=>string.Equals(alias.Trim(),caption.Trim(),StringComparison.OrdinalIgnoreCase))).ToList();
             return matches?.Count==1 ? new BrowserViewDragRequest {ProjectKey=project.Key,ViewId=matches[0].Id,Name=project.Name+" · "+matches[0].Name} : null;
         }
-        internal ViewSearchPane DropTarget(BrowserNativeInterop.ScreenPoint point) =>
-            BrowserNativeInterop.IsOwnWindowAt(point) ? hosted.FirstOrDefault(item=>ContainsScreenPoint(item.Pane,point))?.Search ??
-                floating.FirstOrDefault(item=>item.Toolbar.Contains(point))?.Search : null;
+        internal ViewSearchPane DropTarget(BrowserNativeInterop.ScreenPoint point)
+        {
+            if(!BrowserNativeInterop.IsOwnWindowAt(point))return null;
+            IntPtr frame=BrowserNativeInterop.RootWindow(BrowserNativeInterop.WindowFromPoint(point));
+            return hosted.FirstOrDefault(item=>
+                PresentationSource.FromVisual(item.Pane) is System.Windows.Interop.HwndSource source &&
+                BrowserNativeInterop.RootWindow(source.Handle)==frame && ContainsScreenPoint(item.Pane,point))?.Search ??
+                floating.FirstOrDefault(item=>item.Toolbar.Window==frame && item.Toolbar.Contains(point))?.Search;
+        }
         private System.Threading.Tasks.Task<BrowserViewDragRequest> CaptureBrowserSelection()
         {
             var completion=new System.Threading.Tasks.TaskCompletionSource<BrowserViewDragRequest>(System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
@@ -171,7 +179,7 @@ namespace MEP_Review_Tab_View_Ver1
                         .Select(item=>PresentationSource.FromVisual(item.Pane) as System.Windows.Interop.HwndSource)
                         .Where(source=>source!=null).Select(source=>BrowserNativeInterop.RootWindow(source.Handle))
                         .FirstOrDefault(window=>window!=IntPtr.Zero && window!=mainWindow);
-                    if(frame==IntPtr.Zero)frame=floating.FirstOrDefault(item=>item.Toolbar.Selection().Matches(info.QualifiedAliases))?.Toolbar.Window ?? IntPtr.Zero;
+                    if(frame==IntPtr.Zero)frame=floating.FirstOrDefault(item=>item.Selection().Matches(info.QualifiedAliases))?.Toolbar.Window ?? IntPtr.Zero;
                     if(frame!=IntPtr.Zero)FloatingViewInterop.Reposition(frame,point,request.GrabOffsetX,request.GrabOffsetY);
                 }
                 catch(Exception ex)
@@ -300,6 +308,8 @@ namespace MEP_Review_Tab_View_Ver1
         private void RefreshPanes(UIApplication app)
         {
             if (!enabled || disposed) return;
+            foreach(var manager in GetRoots().SelectMany(NativeTabLayout.Descendants).OfType<Xceed.Wpf.AvalonDock.DockingManager>().Distinct())
+                FloatingDocumentPresenter.Refresh(manager);
             Catalog.Update(app);
             SynchronizeFloating(app.MainWindowHandle);
             var visible = hosted.Where(item => item.Pane.IsVisible).ToList();
@@ -315,7 +325,7 @@ namespace MEP_Review_Tab_View_Ver1
             foreach(var item in floating.ToList())
             {
                 item.Search.SetFloatingFrame(item.Toolbar.Window);
-                var selection=item.Toolbar.Selection();
+                var selection=item.Selection();
                 var project=Catalog.Resolve(selection);
                 if(project!=null)item.Search.Refresh(app,selection,false,project,Catalog.Projects);
                 item.Toolbar.Resize();
@@ -325,6 +335,19 @@ namespace MEP_Review_Tab_View_Ver1
         private void SynchronizeFloating(IntPtr mainWindow)
         {
             var windows=FloatingViewInterop.OwnWindows();
+            var models=new Dictionary<IntPtr,LayoutDocumentFloatingWindow>();
+            foreach(var manager in GetRoots().SelectMany(NativeTabLayout.Descendants).OfType<Xceed.Wpf.AvalonDock.DockingManager>().Distinct())
+            foreach(var control in manager.FloatingWindows.OfType<LayoutDocumentFloatingWindowControl>())
+            {
+                if(!(control.Model is LayoutDocumentFloatingWindow model) || model.RootDocument==null)continue;
+                var handle=new System.Windows.Interop.WindowInteropHelper(control).Handle;
+                if(handle==IntPtr.Zero)continue;
+                models[BrowserNativeInterop.RootWindow(handle)]=model;
+                string title=model.RootDocument.ToolTip as string ?? model.RootDocument.Title;
+                if(!string.Equals(control.Title,title,StringComparison.Ordinal))control.Title=title;
+            }
+            foreach(var item in floating)
+                item.Model=models.TryGetValue(item.Toolbar.Window,out var model) ? model : null;
             foreach(var stale in floating.Where(item=>!windows.Contains(item.Toolbar.Window)).ToList())
             {
                 stale.Search.Dispose();stale.Toolbar.Dispose();floating.Remove(stale);
@@ -342,13 +365,14 @@ namespace MEP_Review_Tab_View_Ver1
                 if(hosted.Any(item=>
                     PresentationSource.FromVisual(item.Pane) is System.Windows.Interop.HwndSource source &&
                     BrowserNativeInterop.RootWindow(source.Handle)==window))continue;
-                var selection=new PaneViewSelection {Title=FloatingViewInterop.Title(window),ToolTip=FloatingViewInterop.Title(window)};
+                models.TryGetValue(window,out var model);
+                var selection=PaneViewSelection.ReadFloating(model,new PaneViewSelection {Title=FloatingViewInterop.Title(window),ToolTip=FloatingViewInterop.Title(window)});
                 if(Catalog.Resolve(selection)==null)continue;
                 var search=new ViewSearchPane(api);
                 try
                 {
                     var toolbar=new FloatingViewToolbar(window,search,RequestRefresh);
-                    floating.Add(new FloatingHosted {Toolbar=toolbar,Search=search});
+                    floating.Add(new FloatingHosted {Toolbar=toolbar,Search=search,Model=model});
                 }
                 catch(Exception ex){search.Dispose();System.Diagnostics.Trace.WriteLine(ex);}
             }
@@ -357,7 +381,7 @@ namespace MEP_Review_Tab_View_Ver1
         internal PaneViewSelection ReadPaneSelection(ViewSearchPane search)
         {
             var owner = hosted.FirstOrDefault(item => ReferenceEquals(item.Search, search));
-            return owner == null ? floating.FirstOrDefault(item=>ReferenceEquals(item.Search,search))?.Toolbar.Selection() : PaneViewSelection.Read(owner.Pane);
+            return owner == null ? floating.FirstOrDefault(item=>ReferenceEquals(item.Search,search))?.Selection() : PaneViewSelection.Read(owner.Pane);
         }
         internal bool IsFloating(ViewSearchPane search)=>floating.Any(item=>ReferenceEquals(item.Search,search));
 
@@ -374,11 +398,10 @@ namespace MEP_Review_Tab_View_Ver1
             var source = (owner?.Pane as LayoutDocumentPaneControl)?.Model as LayoutDocumentPane;
             if(source==null && IsFloating(search))
             {
-                var selection=ReadPaneSelection(search);
-                var project=Catalog.Resolve(selection);
-                var info=project?.Views.FirstOrDefault(view=>view.Open && selection.Matches(view.QualifiedAliases));
-                if(info==null)return null;
-                return FindDocument(new PaneViewCandidate {Id=info.Id,Aliases=info.Aliases,QualifiedAliases=info.QualifiedAliases}).Parent;
+                var model=floating.First(item=>ReferenceEquals(item.Search,search)).Model;
+                if(model?.RootDocument==null)
+                    throw new InvalidOperationException("Chưa đồng bộ được khung view rời. Hãy thử lại sau khi bố cục ổn định.");
+                return model;
             }
             if (source == null)
                 throw new InvalidOperationException("Bố cục WT vừa thay đổi. Hãy chọn lại view.");
@@ -416,7 +439,7 @@ namespace MEP_Review_Tab_View_Ver1
             try{native=FindDocument(new PaneViewCandidate {Id=id,Aliases=view.Aliases,QualifiedAliases=view.QualifiedAliases});}
             catch(InvalidOperationException)
             {
-                var frame=floating.FirstOrDefault(item=>item.Toolbar.Selection().Matches(view.QualifiedAliases));
+                var frame=floating.FirstOrDefault(item=>item.Selection().Matches(view.QualifiedAliases));
                 if(frame==null)throw;
                 frame.Toolbar.Activate();return;
             }
