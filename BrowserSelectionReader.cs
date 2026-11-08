@@ -41,7 +41,7 @@ namespace MEP_Review_Tab_View_Ver1
             new BrowserViewDragRequest {ProjectKey=project.Key,ViewId=view.Id,Name=project.Name+" · "+view.Name};
         private static void Log(string value)
         {
-            try{File.AppendAllText(Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location),"browser-selection.log"),DateTimeOffset.Now.ToString("O")+" "+value+Environment.NewLine);}
+            try{File.AppendAllText(Path.Combine(AddinPaths.OutputDirectory,"browser-selection.log"),DateTimeOffset.Now.ToString("O")+" "+value+Environment.NewLine);}
             catch(Exception ex){System.Diagnostics.Trace.WriteLine(ex);}
         }
     }

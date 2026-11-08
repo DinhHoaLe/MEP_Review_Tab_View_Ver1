@@ -25,6 +25,7 @@ namespace MEP_Review_Tab_View_Ver1
             internal string[] Aliases;
             internal string[] QualifiedAliases;
             internal object ProjectKey;
+            internal bool ProjectSwitch;
         }
 
         private readonly SwitchViewHandler handler;
@@ -43,6 +44,7 @@ namespace MEP_Review_Tab_View_Ver1
         private readonly object previewKey = new object();
         private long previewToken;
         private object documentKey;
+        private readonly Dictionary<object,long> projectViewsInPane=new Dictionary<object,long>();
         private readonly object paneKey = new object();
         private readonly object closeKey = new object();
         private bool closing;
@@ -79,6 +81,7 @@ namespace MEP_Review_Tab_View_Ver1
 
         private void PaneUnloaded(object sender, RoutedEventArgs args)
         {
+            if(disposed)return;
             dropdown.CancelPreview();
             EndDrag();
         }
@@ -151,6 +154,7 @@ namespace MEP_Review_Tab_View_Ver1
             bool changed=forceRefresh || documentChanged || activeId!=currentId || paneCaption!=selection.Title || rows.Count!=updated.Count ||
                 !rows.Zip(updated,(a,b)=>a.Id==b.Id && a.Name==b.Name && a.Detail==b.Detail).All(equal=>equal);
             activeId=currentId;
+            if(documentKey!=null && currentId>=0)projectViewsInPane[documentKey]=currentId;
             paneCaption=selection.Title;
             CloseViewButton.IsEnabled=!closing && currentId>=0 && updated.Count>1;
             CloseViewButton.ToolTip=updated.Count<=1 ? "Revit cần giữ ít nhất một view của project đang mở" : "Đóng view đang hiển thị trong ô này";
@@ -166,8 +170,13 @@ namespace MEP_Review_Tab_View_Ver1
             if(!((sender as FrameworkElement)?.DataContext is ProjectTabItem tab)) return;
             if(ReferenceEquals(tab.Key,documentKey))return;
             var project=App.TabHost.Catalog.Find(tab.Key);
-            var info=project?.Views.FirstOrDefault(view=>view.Open && view.Id==project.LastActiveView) ?? project?.Views.FirstOrDefault(view=>view.Open);
-            if(info!=null) QueueView(ToRow(project,info));
+            var info=project?.Views.FirstOrDefault();
+            if(info!=null)
+            {
+                var request=ToRow(project,info);
+                request.ProjectSwitch=true;
+                QueueView(request);
+            }
         }
         private void CloseProjectClick(object sender,RoutedEventArgs args)
         {
@@ -225,7 +234,7 @@ namespace MEP_Review_Tab_View_Ver1
             ExternalEventRequest result = api.Post(handler, handler.Execute);
             LogSwitch("ExternalEvent=" + result);
             if (result == ExternalEventRequest.Accepted || result == ExternalEventRequest.Pending)
-                SetStatus("Đang chuyển đến: " + row.Name);
+                SetStatus(row.ProjectSwitch ? "Đang chuyển project cho ô này…" : "Đang chuyển đến: " + row.Name);
             else
             {
                 handler.Pending = null;
@@ -432,7 +441,7 @@ namespace MEP_Review_Tab_View_Ver1
         {
             try
             {
-                File.AppendAllText(Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location), "view-switch.log"),
+                File.AppendAllText(Path.Combine(AddinPaths.OutputDirectory, "view-switch.log"),
                     DateTimeOffset.Now.ToString("O") + " " + message + Environment.NewLine);
             }
             catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex); }
@@ -440,6 +449,7 @@ namespace MEP_Review_Tab_View_Ver1
 
         public void Dispose()
         {
+            if(disposed)return;
             disposed = true;
             EndDrag();
             dropdown.Dispose();
@@ -449,11 +459,35 @@ namespace MEP_Review_Tab_View_Ver1
             api.Cancel(handler);
             api.Cancel(closeKey);
         }
+        internal void Shutdown()
+        {
+            if(disposed)return;
+            disposed=true;
+            dragStart=null;dragRequest=null;
+            Unloaded-=PaneUnloaded;
+            handler.Pending=null;
+            ++previewToken;
+            api.Cancel(handler);api.Cancel(closeKey);api.Cancel(previewKey);
+            ShutdownCleanup.Run("Dropdown shutdown",()=>dropdown.Dispose(true));
+            ShutdownCleanup.Run("Preview shutdown",preview.Dispose);
+        }
 
         private sealed class SwitchViewHandler : IExternalEventHandler
         {
             private readonly ViewSearchPane owner;
             internal ViewRow Pending;
+            private long sequence;
+            private sealed class Operation
+            {
+                internal ViewRow Request;
+                internal long Sequence;
+                internal Xceed.Wpf.AvalonDock.Layout.ILayoutContainer Destination;
+                internal Dictionary<Xceed.Wpf.AvalonDock.Layout.ILayoutContainer,Xceed.Wpf.AvalonDock.Layout.LayoutDocument> Retained;
+                internal PaneViewMove Move;
+                internal bool Moved;
+                internal int ActivationAttempts;
+                internal int ViewRequests;
+            }
             internal SwitchViewHandler(ViewSearchPane owner) { this.owner = owner; }
             public string GetName() => "MEP switch open view";
 
@@ -462,64 +496,123 @@ namespace MEP_Review_Tab_View_Ver1
                 var request = Pending;
                 Pending = null;
                 if (request == null || owner.disposed) return;
-                PaneViewMove move = null;
+                long currentSequence=++sequence;
                 try
                 {
                     var project = App.TabHost.Catalog.Find(request.ProjectKey);
                     if (project == null || !project.Document.IsValidObject || request.Generation != owner.generation)
                         throw new InvalidOperationException("Project đã thay đổi. Hãy chọn lại view.");
-                    var destination = App.TabHost.PaneModel(owner);
-                    var target = project.Document.GetElement(new ElementId(request.Id)) as Autodesk.Revit.DB.View;
-                    if (target == null) throw new InvalidOperationException("View không còn tồn tại.");
-                    App.TabHost.DismissAllTransientUi();
-                    var uiDocument = new UIDocument(project.Document);
-                    if (!uiDocument.GetOpenUIViews().Any(view => view.ViewId.Value == request.Id))
+                    bool projectSwitch=request.ProjectSwitch;
+                    if(projectSwitch)
                     {
-                        App.TabHost.ActivateProjectView(project,project.Views.First(view=>view.Open).Id);
-                        uiDocument = app.ActiveUIDocument;
-                        if(uiDocument==null || !Equals(uiDocument.Document,project.Document))
-                            throw new InvalidOperationException("Revit chưa kích hoạt đúng project của view cần mở.");
-                        uiDocument.ActiveView = target;
+                        long preferred=owner.projectViewsInPane.TryGetValue(project.Key,out var remembered) ? remembered : project.LastActiveView;
+                        var chosen=App.TabHost.ChooseProjectView(owner,project,preferred);
+                        if(chosen==null)throw new InvalidOperationException("Project không còn view khác để hiển thị trong ô này; các view hiện có đang nằm ở ô khác.");
+                        LogSwitch("Independent project switch: project="+project.Name+"; view="+chosen.Id+"; alreadyOpen="+chosen.Open);
+                        request=owner.ToRow(project,chosen);
                     }
-                    if (destination == null)
-                    {
-                        // Detached native frames own their drawing HWND. Navigate
-                        // through Revit rather than moving a null docking model.
-                        App.TabHost.ActivateProjectView(project,request.Id);
-                    }
-                    else
-                    {
-                    move = App.TabHost.MoveIntoPane(owner,
-                        new PaneViewCandidate { Id = request.Id, Aliases = request.Aliases,QualifiedAliases=request.QualifiedAliases }, out var nativeDocument,destination);
-                    LogSwitch("Moved native view into requested pane");
-                    // Use the same activation event as Revit's native tab dropdown
-                    // to transfer focus to the document after moving it between WT panes.
-                    move.ActivateBoth(nativeDocument);
-                    }
-                    uiDocument = app.ActiveUIDocument;
-                    if(uiDocument==null || !Equals(uiDocument.Document,project.Document))
-                        throw new InvalidOperationException("Revit chưa kích hoạt đúng project của view đã chọn.");
-                    // Execute synchronously in the ExternalEvent callback. This
-                    // also lets us report whether Revit actually accepted the view.
-                    if (uiDocument.ActiveView.Id.Value != request.Id) uiDocument.ActiveView = target;
-                    long activated = uiDocument.ActiveView.Id.Value;
-                    LogSwitch("Activated=" + activated);
-                    if (activated != request.Id)
-                        throw new InvalidOperationException("Revit chưa kích hoạt view đã chọn. Hãy kết thúc lệnh hiện tại rồi thử lại.");
-                    owner.SetStatus("Đang xem: " + request.Name);
+                    Continue(new Operation {Request=request,Sequence=currentSequence,
+                        Destination=App.TabHost.PaneModel(owner),Retained=App.TabHost.CapturePaneSelections()},app);
                 }
                 catch (Exception ex)
                 {
-                    try { move?.Restore(); }
-                    catch (Exception restoreError) { LogSwitch("RESTORE ERROR " + restoreError); }
                     LogSwitch("ERROR " + ex);
                     owner.SetStatus(ex.Message, true);
                 }
+            }
+
+            private void Defer(Operation operation)
+            {
+                owner.api.PostAfterUiTurn(this,app=>Continue(operation,app));
+            }
+            private void Continue(Operation operation,UIApplication app)
+            {
+                if(owner.disposed || operation.Sequence!=sequence)return;
+                bool finished=false;
+                try
+                {
+                    var request=operation.Request;
+                    var project=App.TabHost.Catalog.Find(request.ProjectKey);
+                    // Native activation can refresh this pane and advance its
+                    // row generation before the next API turn. Keep the slot
+                    // and request identity validated on entry.
+                    if(project==null || !project.Document.IsValidObject)
+                        throw new InvalidOperationException("Project hoặc ô view đã thay đổi. Hãy chọn lại view.");
+                    var uiDocument=app.ActiveUIDocument;
+                    if(uiDocument==null || !Equals(uiDocument.Document,project.Document))
+                    {
+                        if(operation.ActivationAttempts++>=4)
+                            throw new InvalidOperationException("Revit chưa chuyển được project. Hãy kết thúc lệnh hiện tại rồi thử lại.");
+                        long anchor=request.Id;
+                        if(!operation.Moved && !new UIDocument(project.Document).GetOpenUIViews().Any(view=>view.ViewId.Value==anchor))
+                        {
+                            // Prefer a view already displayed in this project;
+                            // preserve its selection while opening the new view.
+                            var displayed=operation.Retained.Values.Select(PaneViewSelection.ReadDocument)
+                                .FirstOrDefault(selection=>ReferenceEquals(App.TabHost.Catalog.Resolve(selection),project));
+                            anchor=displayed?.Resolve(project.Views.Select(view=>new PaneViewCandidate
+                                {Id=view.Id,Aliases=view.Aliases,QualifiedAliases=view.QualifiedAliases}),-1) ?? -1;
+                            if(anchor<0)anchor=project.Views.First(view=>view.Open).Id;
+                        }
+                        App.TabHost.ActivateProjectView(project,anchor);
+                        LogSwitch("Waiting for project activation; attempt="+operation.ActivationAttempts);
+                        Defer(operation);
+                        return;
+                    }
+                    var target=project.Document.GetElement(new ElementId(request.Id)) as Autodesk.Revit.DB.View;
+                    if(target==null)throw new InvalidOperationException("View không còn tồn tại.");
+                    if(!operation.Moved)
+                    {
+                        App.TabHost.DismissAllTransientUi();
+                        if(!uiDocument.GetOpenUIViews().Any(view=>view.ViewId.Value==request.Id))
+                        {
+                            RequestActivation(operation,uiDocument,target);
+                            return;
+                        }
+                        operation.Move=App.TabHost.MoveIntoPane(owner,new PaneViewCandidate
+                            {Id=request.Id,Aliases=request.Aliases,QualifiedAliases=request.QualifiedAliases},
+                            out var nativeDocument,operation.Destination,operation.Retained);
+                        operation.Move.ActivateBoth(nativeDocument);
+                        operation.Moved=true;
+                        LogSwitch("Moved native view; verifying after Revit processes activation");
+                        Defer(operation);
+                        return;
+                    }
+                    if(uiDocument.ActiveView.Id.Value!=request.Id)
+                    {
+                        RequestActivation(operation,uiDocument,target);
+                        return;
+                    }
+                    LogSwitch("Activated="+request.Id);
+                    owner.SetStatus("Đang xem: "+request.Name);
+                    finished=true;
+                }
+                catch(Exception ex)
+                {
+                    try{operation.Move?.Restore();}
+                    catch(Exception restoreError){LogSwitch("RESTORE ERROR "+restoreError);}
+                    LogSwitch("ERROR "+ex);
+                    owner.SetStatus(ex.Message,true);
+                    finished=true;
+                }
                 finally
                 {
-                    owner.forceRefresh = true;
-                    App.TabHost.RefreshAfterMove(app);
+                    if(finished && !owner.disposed)
+                    {
+                        owner.forceRefresh=true;
+                        App.TabHost.RefreshAfterMove(app);
+                    }
                 }
+            }
+            private void RequestActivation(Operation operation,UIDocument document,Autodesk.Revit.DB.View view)
+            {
+                if(operation.ViewRequests++>=6)
+                    throw new InvalidOperationException("Revit chưa mở được view. Hãy kết thúc lệnh hiện tại rồi thử lại.");
+                // Idling may run immediately after a native browser gesture.
+                // Let Revit process activation after leaving the API callback.
+                document.RequestViewChange(view);
+                LogSwitch("Requested asynchronous view activation="+view.Id.Value);
+                Defer(operation);
             }
         }
     }

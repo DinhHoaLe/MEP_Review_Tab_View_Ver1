@@ -23,6 +23,7 @@ namespace MEP_Review_Tab_View_Ver1
         private readonly BrowserNativeInterop.MouseHook callback;
         private IntPtr hook,tree;
         private BrowserNativeInterop.ScreenPoint start;
+        private BrowserNativeInterop.ScreenPoint lastPoint;
         private bool tracking,claiming,running,disposed;
         private Task<string> automationSelection;
         private Task<BrowserViewDragRequest> apiSelection;
@@ -58,6 +59,7 @@ namespace MEP_Review_Tab_View_Ver1
                         tree=BrowserNativeInterop.TreeAt(mouse.Point);
                         tracking=true;
                         start=mouse.Point;
+                        lastPoint=start;
                         ++session;
                         releasedPoint=null;
                         BrowserNativeInterop.GetAsyncKeyState(27);
@@ -68,11 +70,15 @@ namespace MEP_Review_Tab_View_Ver1
                 }
                 else if(kind==0x0202)
                 {
-                    if(claiming && !running)releasedPoint=mouse.Point;
+                    // While waiting for Revit, consumed LL mouse moves do not
+                    // update the OS cursor. Mouse-up then carries the old cursor
+                    // location. Preserve the intended point from the move event.
+                    if((tracking || claiming) && !running)releasedPoint=claiming ? lastPoint : mouse.Point;
                     if(!claiming)tracking=false;
                 }
                 else if(kind==0x0200)
                 {
+                    if(tracking || claiming)lastPoint=mouse.Point;
                     if(claiming && !running) return new IntPtr(1);
                     if(tracking && !claiming &&
                         (Math.Abs(mouse.Point.X-start.X)>Math.Max(1,SystemParameters.MinimumHorizontalDragDistance/2) ||
@@ -113,7 +119,9 @@ namespace MEP_Review_Tab_View_Ver1
         }
         private async Task FinishSelection(long token,Task<BrowserViewDragRequest> apiProbe,Task<string> accessible)
         {
-            await Task.WhenAny(apiProbe,Task.Delay(1400)).ConfigureAwait(false);
+            // ExternalEvent may be serviced only after mouse release. A short
+            // timeout discarded a valid gesture before its selection arrived.
+            await apiProbe.ConfigureAwait(false);
             var selected=apiProbe.Status==TaskStatus.RanToCompletion ? apiProbe.Result : null;
             string caption=accessible?.Status==TaskStatus.RanToCompletion ? accessible.Result : null;
             _=root.Dispatcher.BeginInvoke(DispatcherPriority.Send,new Action(()=>
@@ -125,9 +133,9 @@ namespace MEP_Review_Tab_View_Ver1
                 // Revit may service ExternalEvent only after the button is
                 // released. Retain the actual drop point instead of losing
                 // that completed gesture while waiting for the API selection.
-                if(releasedPoint.HasValue && (BrowserNativeInterop.GetAsyncKeyState(1)&0x8000)==0)
+                if((BrowserNativeInterop.GetAsyncKeyState(1)&0x8000)==0)
                 {
-                    if((BrowserNativeInterop.GetAsyncKeyState(27)&0x8001)==0)target(releasedPoint.Value)?.AcceptBrowserView(request);
+                    CompleteReleasedDrop(request);
                     claiming=false;return;
                 }
                 Begin(request);
@@ -135,7 +143,9 @@ namespace MEP_Review_Tab_View_Ver1
         }
         private void Begin(BrowserViewDragRequest request)
         {
-            if(disposed || (BrowserNativeInterop.GetAsyncKeyState(1)&0x8000)==0){claiming=false;return;}
+            if(disposed){claiming=false;return;}
+            if((BrowserNativeInterop.GetAsyncKeyState(1)&0x8000)==0)
+            {CompleteReleasedDrop(request);claiming=false;return;}
             Log("Begin view drag "+request.Name+"; id="+request.ViewId);
             bool cancelled=false;
             var label=new TextBlock {Text="Mở view: "+request.Name,Margin=new Thickness(8,5,8,5),Foreground=MepPalette.Brush(MepPalette.Ink),
@@ -190,9 +200,18 @@ namespace MEP_Review_Tab_View_Ver1
             disposed=true;
             if(hook!=IntPtr.Zero){BrowserNativeInterop.UnhookWindowsHookEx(hook);hook=IntPtr.Zero;}
         }
+        private void CompleteReleasedDrop(BrowserViewDragRequest request)
+        {
+            if(disposed || (BrowserNativeInterop.GetAsyncKeyState(27)&0x8001)!=0)return;
+            var point=releasedPoint;
+            if(!point.HasValue && BrowserNativeInterop.GetCursorPos(out var cursor))point=cursor;
+            var pane=point.HasValue ? target(point.Value) : null;
+            Log("Released browser drop; view="+request.ViewId+"; point="+point?.X+","+point?.Y+"; pane="+(pane!=null));
+            pane?.AcceptBrowserView(request);
+        }
         private static void Log(string text)
         {
-            try{File.AppendAllText(Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location),"browser-drag.log"),DateTimeOffset.Now.ToString("O")+" "+text+Environment.NewLine);}
+            try{File.AppendAllText(Path.Combine(AddinPaths.OutputDirectory,"browser-drag.log"),DateTimeOffset.Now.ToString("O")+" "+text+Environment.NewLine);}
             catch(Exception ex){System.Diagnostics.Trace.WriteLine(ex);}
         }
     }

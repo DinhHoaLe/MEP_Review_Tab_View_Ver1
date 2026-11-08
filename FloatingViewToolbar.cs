@@ -80,14 +80,15 @@ namespace MEP_Review_Tab_View_Ver1
                 point.X>=rect.Left && point.X<=rect.Right && point.Y>=rect.Top && point.Y<=rect.Bottom;
         }
         internal void Activate()=>FloatingViewInterop.SetForegroundWindow(Window);
-        public void Dispose()
+        public void Dispose()=>Dispose(true);
+        internal void Dispose(bool restoreDrawing)
         {
             if(disposed)return;
             disposed=true;
             Content.SizeChanged-=ContentSizeChanged;
             if(FloatingViewInterop.IsWindow(Window))FloatingViewInterop.RemoveWindowSubclass(Window,callback,subclassId);
             source.Dispose();
-            if(FloatingViewInterop.IsWindow(Window) && FloatingViewInterop.IsWindow(drawing) && BrowserNativeInterop.GetParent(drawing)==Window)
+            if(restoreDrawing && FloatingViewInterop.IsWindow(Window) && FloatingViewInterop.IsWindow(drawing) && BrowserNativeInterop.GetParent(drawing)==Window)
             {
                 FloatingViewInterop.GetClientRect(Window,out var client);
                 FloatingViewInterop.SetWindowPos(drawing,IntPtr.Zero,left,top,Math.Max(1,client.Width-left-right),Math.Max(1,client.Height-top-bottom),0x0014);

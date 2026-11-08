@@ -48,7 +48,7 @@ namespace MEP_Review_Tab_View_Ver1
         }
         private void ItemMouseLeave(object sender, MouseEventArgs args) => StopPreview();
         private void DropDownClosed(object sender, EventArgs args) => StopPreview();
-        private void StopPreview() => hoverPreview.Stop();
+        private void StopPreview() { if(!disposed)hoverPreview.Stop(); }
         internal void CancelPreview() => StopPreview();
 
         private void ItemMouseDown(object sender, MouseButtonEventArgs args)
@@ -111,16 +111,19 @@ namespace MEP_Review_Tab_View_Ver1
             }));
         }
 
-        public void Dispose()
+        public void Dispose()=>Dispose(false);
+        internal void Dispose(bool shuttingDown)
         {
+            if(disposed)return;
             disposed = true;
-            StopPreview();
-            hoverPreview.Dispose();
             pending = null;
             selector.SelectionChanged -= SelectionChanged;
             selector.PreviewKeyDown -= KeyDown;
             selector.DropDownClosed -= DropDownClosed;
-            selector.ItemContainerStyle = originalStyle;
+            hoverPreview.Dispose(!shuttingDown);
+            // Restyling regenerates ComboBoxItems and selected-item bindings.
+            // During Revit shutdown that visual tree is already being destroyed.
+            if(!shuttingDown)selector.ItemContainerStyle = originalStyle;
         }
     }
 }

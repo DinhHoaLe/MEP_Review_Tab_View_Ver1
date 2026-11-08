@@ -29,6 +29,7 @@ namespace MEP_Review_Tab_View_Ver1
         [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
         [DllImport("user32.dll")] internal static extern bool ReleaseCapture();
         [DllImport("user32.dll",CharSet=CharSet.Unicode)] internal static extern IntPtr SendMessage(IntPtr window,uint message,IntPtr wParam,IntPtr lParam);
+        [DllImport("user32.dll")] internal static extern bool PostMessage(IntPtr window,uint message,IntPtr wParam,IntPtr lParam);
         internal static IntPtr TreeAt(ScreenPoint point)
         {
             IntPtr window=WindowFromPoint(point);

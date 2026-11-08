@@ -104,7 +104,7 @@ namespace MEP_Review_Tab_View_Ver1
         {
             try
             {
-                string directory = Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location),"view-audit");
+                string directory = Path.Combine(AddinPaths.OutputDirectory,"view-audit");
                 Directory.CreateDirectory(directory);
                 string name = string.Concat(project.Name.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
                 var report = new { Project=project.Name, Scanned=DateTimeOffset.Now, Note="Image export is checked on hover; table previews show the first 16 rows and 8 columns.",

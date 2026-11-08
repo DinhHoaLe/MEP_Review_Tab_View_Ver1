@@ -41,6 +41,8 @@ namespace MEP_Review_Tab_View_Ver1
         private bool disposed;
         internal readonly OpenProjectCatalog Catalog = new OpenProjectCatalog();
         private NativeBrowserDrag browserDrag;
+        private readonly List<Rect> browserBounds=new List<Rect>();
+        private string browserBoundsSignature;
         private readonly object browserSelectionKey=new object();
         private readonly object projectCloseKey=new object();
         private readonly object floatKey=new object();
@@ -70,11 +72,30 @@ namespace MEP_Review_Tab_View_Ver1
         private bool IsBrowserPoint(BrowserNativeInterop.ScreenPoint point)
         {
             if(!enabled || disposed)return false;
+            // A low-level mouse hook must return promptly. Never walk Revit's
+            // WPF visual tree inside the hook (Windows can silently remove it).
+            return browserBounds.Any(rect=>rect.Contains(point.X,point.Y));
+        }
+        private void RefreshBrowserBounds()
+        {
+            browserBounds.Clear();
             var elements=GetRoots().SelectMany(NativeTabLayout.Descendants).OfType<FrameworkElement>().ToList();
-            return elements.OfType<LayoutAnchorableControl>()
-                .Any(control => (control.Model as LayoutAnchorable)?.Title?.StartsWith("Project Browser",StringComparison.OrdinalIgnoreCase)==true && ContainsScreenPoint(control,point)) ||
-                elements.OfType<System.Windows.Controls.TabControl>().Any(control=>
-                    (control.SelectedItem as LayoutAnchorable)?.Title?.StartsWith("Project Browser",StringComparison.OrdinalIgnoreCase)==true && ContainsScreenPoint(control,point));
+            var controls=elements.Where(control=>
+                (control is LayoutAnchorableControl anchor && anchor.Model?.Title?.StartsWith("Project Browser",StringComparison.OrdinalIgnoreCase)==true) ||
+                (control is System.Windows.Controls.TabControl tab && (tab.SelectedItem as LayoutAnchorable)?.Title?.StartsWith("Project Browser",StringComparison.OrdinalIgnoreCase)==true));
+            foreach(var control in controls.Where(control=>control.IsVisible && control.IsLoaded))
+            {
+                var first=control.PointToScreen(new Point());
+                var last=control.PointToScreen(new Point(control.ActualWidth,control.ActualHeight));
+                browserBounds.Add(new Rect(first,last));
+            }
+            string signature=string.Join(";",browserBounds);
+            if(signature!=browserBoundsSignature)
+            {
+                browserBoundsSignature=signature;
+                try{File.AppendAllText(Path.Combine(AddinPaths.OutputDirectory,"browser-drag.log"),DateTimeOffset.Now.ToString("O")+" Browser bounds="+signature+Environment.NewLine);}
+                catch(Exception ex){System.Diagnostics.Trace.WriteLine(ex);}
+            }
         }
         private BrowserViewDragRequest ResolveBrowserView(string caption)
         {
@@ -184,7 +205,7 @@ namespace MEP_Review_Tab_View_Ver1
                 }
                 catch(Exception ex)
                 {
-                    try{File.AppendAllText(Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location),"float-view.log"),DateTimeOffset.Now+" "+ex+Environment.NewLine);}
+                    try{File.AppendAllText(Path.Combine(AddinPaths.OutputDirectory,"float-view.log"),DateTimeOffset.Now+" "+ex+Environment.NewLine);}
                     catch(Exception logError){System.Diagnostics.Trace.WriteLine(logError);}
                     error(ex.Message);
                 }
@@ -205,7 +226,10 @@ namespace MEP_Review_Tab_View_Ver1
 
         internal void OnIdling(object sender, IdlingEventArgs args)
         {
-            if (!enabled || DateTime.UtcNow < nextRefresh || !(sender is UIApplication app)) return;
+            if(disposed || !(sender is UIApplication app))return;
+            api.Drain(app);
+            if(api.HasPending)args.SetRaiseWithoutDelay();
+            if (!enabled || DateTime.UtcNow < nextRefresh) return;
             nextRefresh = DateTime.UtcNow.AddSeconds(1);
             try
             {
@@ -239,6 +263,7 @@ namespace MEP_Review_Tab_View_Ver1
         private void Update(UIApplication app)
         {
             HookLayout();
+            RefreshBrowserBounds();
             SynchronizeLayout();
             RefreshPanes(app);
         }
@@ -356,7 +381,7 @@ namespace MEP_Review_Tab_View_Ver1
             if(signature!=floatingSignature)
             {
                 floatingSignature=signature;
-                try{File.AppendAllText(Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location),"floating-ui.log"),DateTimeOffset.Now+" "+signature+Environment.NewLine);}
+                try{File.AppendAllText(Path.Combine(AddinPaths.OutputDirectory,"floating-ui.log"),DateTimeOffset.Now+" "+signature+Environment.NewLine);}
                 catch(Exception ex){System.Diagnostics.Trace.WriteLine(ex);}
             }
             foreach(var window in windows)
@@ -446,12 +471,43 @@ namespace MEP_Review_Tab_View_Ver1
             native.IsActive=true;
             native.ActivateFromTabGroupDropDownList();
         }
+        internal Dictionary<ILayoutContainer,LayoutDocument> CapturePaneSelections()
+        {
+            var result=new Dictionary<ILayoutContainer,LayoutDocument>();
+            foreach(var container in NativeDocuments().Select(doc=>doc.Parent).Where(parent=>parent!=null).Distinct())
+            {
+                var selected=container is LayoutDocumentPane pane ? pane.SelectedContent as LayoutDocument :
+                    (container as LayoutDocumentFloatingWindow)?.RootDocument;
+                if(selected!=null)result[container]=selected;
+            }
+            return result;
+        }
+        internal ProjectViewInfo ChooseProjectView(ViewSearchPane owner,ProjectContext project,long preferred)
+        {
+            var destination=PaneModel(owner);
+            var displayed=new HashSet<long>();
+            foreach(var entry in CapturePaneSelections())
+            {
+                if(ReferenceEquals(entry.Key,destination))continue;
+                var selection=PaneViewSelection.ReadDocument(entry.Value);
+                if(!ReferenceEquals(Catalog.Resolve(selection),project))continue;
+                long id=selection.Resolve(project.Views.Select(view=>new PaneViewCandidate
+                    {Id=view.Id,Aliases=view.Aliases,QualifiedAliases=view.QualifiedAliases}),-1);
+                if(id>=0)displayed.Add(id);
+            }
+            long? chosen=ProjectPaneViewSelector.Choose(project.Views
+                .OrderBy(view=>view.Preview==ViewPreviewMode.ImageExport ? 0 : 1).ThenBy(view=>view.Name)
+                .Select(view=>(view.Id,view.Open)),displayed,preferred);
+            return chosen.HasValue ? project.Views.First(view=>view.Id==chosen.Value) : null;
+        }
         internal PaneViewMove MoveIntoPane(ViewSearchPane search, PaneViewCandidate candidate,
-            out LayoutDocument targetDocument, ILayoutContainer source = null)
+            out LayoutDocument targetDocument, ILayoutContainer source = null,Dictionary<ILayoutContainer,LayoutDocument> retainedSelections=null)
         {
             source=source??PaneModel(search);
             targetDocument=FindDocument(candidate);
-            return PaneViewMove.Apply(source, targetDocument);
+            LayoutDocument retained=null;
+            if(targetDocument.Parent!=null && retainedSelections!=null)retainedSelections.TryGetValue(targetDocument.Parent,out retained);
+            return PaneViewMove.Apply(source, targetDocument,retained);
         }
 
         internal void RefreshAfterMove(UIApplication app)
@@ -482,7 +538,7 @@ namespace MEP_Review_Tab_View_Ver1
 
         private string WriteDiagnostics()
         {
-            string path = Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location), "native-tab-layout.txt");
+            string path = Path.Combine(AddinPaths.OutputDirectory, "native-tab-layout.txt");
             var text = new StringBuilder("Native tab layout diagnostics v2\n");
             var panes = GetRoots().SelectMany(NativeTabLayout.Descendants).OfType<FrameworkElement>()
                 .Where(IsDocumentPane).Distinct();
@@ -522,11 +578,22 @@ namespace MEP_Review_Tab_View_Ver1
 
         public void Dispose()
         {
+            if(disposed)return;
             disposed = true;
-            layoutRefresh.Dispose();
-            browserDrag?.Dispose();
-            Disable();
-            api.Dispose();
+            enabled=false;
+            ShutdownCleanup.Run("Layout subscriptions",layoutRefresh.Dispose);
+            ShutdownCleanup.Run("Browser mouse hook",()=>browserDrag?.Dispose());
+            ShutdownCleanup.Run("External event",api.Dispose);
+            // Reset restores live Revit layout; process shutdown only releases
+            // owned resources, avoiding rebinding dying native/WPF controls.
+            foreach(var item in hosted)ShutdownCleanup.Run("WT view UI",item.Search.Shutdown);
+            hosted.Clear();
+            foreach(var item in floating)
+            {
+                ShutdownCleanup.Run("Floating view UI",item.Search.Shutdown);
+                ShutdownCleanup.Run("Floating toolbar",()=>item.Toolbar.Dispose(false));
+            }
+            floating.Clear();
         }
     }
 }

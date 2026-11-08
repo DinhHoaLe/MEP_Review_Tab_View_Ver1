@@ -28,14 +28,14 @@ namespace MEP_Review_Tab_View_Ver1
         }
         private readonly Dictionary<LayoutDocument,Placement> placements=new Dictionary<LayoutDocument,Placement>();
 
-        private PaneViewMove(ILayoutContainer source, ILayoutContainer other)
+        private PaneViewMove(ILayoutContainer source, ILayoutContainer other,LayoutDocument retainedOtherSelection)
         {
             this.source = source;
             this.other = other;
             originalSource = source.Children.OfType<LayoutContent>().ToArray();
             originalOther = ReferenceEquals(source, other) ? null : other.Children.OfType<LayoutContent>().ToArray();
             sourceSelected = Selected(source);
-            otherSelected = Selected(other);
+            otherSelected = retainedOtherSelection!=null && other.Children.Contains(retainedOtherSelection) ? retainedOtherSelection : Selected(other);
             foreach(var document in originalSource.Concat(originalOther ?? Array.Empty<LayoutContent>()).OfType<LayoutDocument>().Distinct())
                 placements[document]=new Placement(document);
         }
@@ -68,14 +68,14 @@ namespace MEP_Review_Tab_View_Ver1
                 if(document!=null)document.Parent=null;
             }
         }
-        internal static PaneViewMove Apply(ILayoutContainer source, LayoutDocument target)
+        internal static PaneViewMove Apply(ILayoutContainer source, LayoutDocument target,LayoutDocument retainedOtherSelection=null)
         {
             var other=target?.Parent;
             if (!Supported(source) || target == null || !Supported(other))
                 throw new InvalidOperationException("Không tìm được ô chứa view đã chọn.");
             if (source.Root == null || !ReferenceEquals(source.Root, other.Root))
                 throw new InvalidOperationException("Hai view không thuộc cùng bố cục cửa sổ Revit.");
-            var move = new PaneViewMove(source, other);
+            var move = new PaneViewMove(source, other,retainedOtherSelection);
             try
             {
                 using (Dispatcher.CurrentDispatcher.DisableProcessing())

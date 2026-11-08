@@ -27,6 +27,7 @@ namespace MEP_Review_Tab_View_Ver1
         }
         internal void Stop()
         {
+            if(disposed)return;
             timer.Stop();
             item = null;
             hide?.Invoke();
@@ -36,11 +37,15 @@ namespace MEP_Review_Tab_View_Ver1
             timer.Stop();
             if (!disposed && item != null) show?.Invoke(item);
         }
-        public void Dispose()
+        public void Dispose()=>Dispose(true);
+        internal void Dispose(bool hidePreview)
         {
+            if(disposed)return;
             disposed = true;
-            Stop();
+            timer.Stop();
+            item=null;
             timer.Tick -= Elapsed;
+            if(hidePreview)hide?.Invoke();
         }
     }
 }

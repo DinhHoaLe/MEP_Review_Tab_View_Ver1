@@ -26,20 +26,22 @@ namespace MEP_Review_Tab_View_Ver1
 
         public Result OnShutdown(UIControlledApplication application)
         {
-            application.ControlledApplication.DocumentChanged -= DocumentChanged;
-            application.ViewActivated -= ViewActivated;
-            application.Idling -= TabHost.OnIdling;
-            TabHost.Dispose();
+            var host=TabHost;
             TabHost = null;
-            try { TabAppearance.Restore(); }
-            catch (Exception ex) { System.Diagnostics.Trace.WriteLine(ex); }
+            ShutdownCleanup.Run("DocumentChanged unsubscribe",()=>application.ControlledApplication.DocumentChanged-=DocumentChanged);
+            ShutdownCleanup.Run("ViewActivated unsubscribe",()=>application.ViewActivated-=ViewActivated);
+            if(host!=null)
+            {
+                ShutdownCleanup.Run("Idling unsubscribe",()=>application.Idling-=host.OnIdling);
+                ShutdownCleanup.Run("View tab host",host.Dispose);
+            }
             return Result.Succeeded;
         }
         private void DocumentChanged(object sender, Autodesk.Revit.DB.Events.DocumentChangedEventArgs args)
         {
-            TabHost.Catalog.Invalidate(args.GetDocument());
+            TabHost?.Catalog.Invalidate(args.GetDocument());
             ViewPreviewImages.Invalidate(args.GetDocument());
         }
-        private void ViewActivated(object sender, Autodesk.Revit.UI.Events.ViewActivatedEventArgs args) => TabHost.RequestRefresh();
+        private void ViewActivated(object sender, Autodesk.Revit.UI.Events.ViewActivatedEventArgs args) => TabHost?.RequestRefresh();
     }
 }
